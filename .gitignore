@@ -1,2 +1,7 @@
 Krillion.exe
 *.exe
+dist/
+tools/cache.json
+tools/*.log
+tools/generated.prev.js
+node_modules/

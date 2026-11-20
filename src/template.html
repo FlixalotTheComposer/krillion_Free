@@ -90,6 +90,7 @@ td.r{text-align:right;white-space:nowrap}.qs{color:var(--muted);font-size:14px}.
 .modal{position:fixed;inset:0;z-index:9;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:16px}
 .modal .box{max-width:460px;font-size:20px;line-height:1.25}
 @media (max-width:520px){.hb b{font-size:24px}#zone{font-size:22px;letter-spacing:3px}}
+@media (max-width:360px){.hb{padding:5px 8px}.hb b{font-size:19px}small{font-size:12px;letter-spacing:1px}#pips{gap:3px}#pips i{width:9px;height:9px;border-width:1px}.ib{width:34px;height:34px;font-size:18px}#tools{top:calc(max(10px,env(safe-area-inset-top)) + 58px)}.q{top:calc(max(10px,env(safe-area-inset-top)) + 66px)}.pb{font-size:20px;padding:6px 12px}.pb.big{font-size:24px}.clock{min-width:44px;font-size:24px}.bar input{font-size:20px}.title h1{letter-spacing:4px}.fb .t{font-size:28px}}
 @media (prefers-reduced-motion:reduce){.title h1{animation:none}}
 </style>
 </head>
@@ -117,7 +118,7 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const hexRGB=h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
 const mixRGB=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];
 const rgb=c=>"rgb("+(c[0]|0)+","+(c[1]|0)+","+(c[2]|0)+")";
-const norm=s=>s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/&/g," and ").replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();
+const norm=s=>s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/c\+\+/g,"cpp").replace(/([cfj])#/g,"$1sharp").replace(/&/g," and ").replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();
 function lev(a,b){const m=[];for(let i=0;i<=a.length;i++)m[i]=[i];for(let j=0;j<=b.length;j++)m[0][j]=j;for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)m[i][j]=Math.min(m[i-1][j]+1,m[i][j-1]+1,m[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return m[a.length][b.length]}
 function seedRng(seed){let h=2166136261;for(let i=0;i<seed.length;i++){h^=seed.charCodeAt(i);h=Math.imul(h,16777619)}return function(){h+=0x6D2B79F5;let t=h;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}}
 function shuffle(a,r){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(r()*(i+1));const x=a[i];a[i]=a[j];a[j]=x}return a}
@@ -126,7 +127,7 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",
 
 /* ================= data prep + matching ================= */
 P.forEach(p=>{p[1]=p[1].filter(a=>a[1]>0);p.total=p[1].reduce((s,a)=>s+a[1],0);p.idx=new Map();
-  p[1].forEach(e=>{[e[0]].concat(e[2]).forEach(n=>{const k=norm(n).replace(/^the /,"");if(!p.idx.has(k))p.idx.set(k,e);const ns=k.replace(/ /g,"");if(!p.idx.has(ns))p.idx.set(ns,e)})})});
+  p[1].forEach(e=>{[e[0]].concat(e[2]||[]).forEach(n=>{const k=norm(n).replace(/^the /,"");if(!p.idx.has(k))p.idx.set(k,e);const ns=k.replace(/ /g,"");if(!p.idx.has(ns))p.idx.set(ns,e)})})});
 function variants(x){const out=[x];const w=x.replace(/^(a|an|the|my) /,"");out.push(w);if(/ies$/.test(w))out.push(w.slice(0,-3)+"y");if(/es$/.test(w))out.push(w.slice(0,-2));if(/s$/.test(w))out.push(w.slice(0,-1));out.push(w.replace(/ /g,""));return out}
 function match(p,input){
   const x=norm(input);if(!x)return null;
@@ -144,7 +145,7 @@ const TIERS=[
  {name:"EPIC",col:"#ba68c8",m:900,i:3},
  {name:"LEGENDARY",col:"#ffd54f",m:1100,i:4}];
 const tierFor=pct=>pct>=8?TIERS[0]:pct>=2?TIERS[1]:pct>=.5?TIERS[2]:pct>=.1?TIERS[3]:TIERS[4];
-const ROUNDS=7,TIME=25,GOAL=7000;
+const ROUNDS=7,TIME=25,GOAL=7000,HULL=3;   /* HULL: misses you can survive before the dive ends */
 
 /* ================= themes ================= */
 const THEMES=[
@@ -293,7 +294,8 @@ function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;
 let st=null;const ui=$("#ui");
 const best=()=>store.get("kr_best",0);
 function setScore(n){$("#score").textContent=n}
-function pips(){const el=$("#pips");el.innerHTML="";if(!st)return;for(let i=0;i<ROUNDS;i++){const e=document.createElement("i");const l=st.log[i];if(l){e.className="on";e.style.background=l.tier?l.tier.col:"#555"}else if(i===st.i&&st.phase!=="done"){e.className="on"}el.appendChild(e)}}
+function pips(){const el=$("#pips");el.innerHTML="";if(!st)return;for(let i=0;i<ROUNDS;i++){const e=document.createElement("i");const l=st.log[i];if(l){e.className="on";e.style.background=l.tier?l.tier.col:"#555"}else if(i===st.i&&st.phase!=="done"){e.className="on"}el.appendChild(e)}
+  if(st.hull!=null){const h=document.createElement("b");h.style.cssText="margin-left:6px;color:#ff6b6b;font-size:20px;line-height:14px";h.textContent="♥".repeat(Math.max(0,st.hull))+"♡".repeat(Math.max(0,HULL-st.hull));el.appendChild(h)}}
 function swatches(){return '<div class="sw">'+THEMES.map((t,i)=>'<button title="'+t.name+'" data-t="'+i+'" style="background:'+t.sw+'"></button>').join("")+"</div>"}
 function bindSw(){ui.querySelectorAll(".sw button").forEach(b=>b.onclick=()=>{AU.click();setTheme(+b.dataset.t,true)});setTheme(themeIdx)}
 function title(){
@@ -301,17 +303,17 @@ function title(){
   const hist=store.get("kr_hist",[]).slice(0,4);
   ui.innerHTML='<div class="title"><h1>KRILLION</h1><div class="st">THE DAILY DIVE</div><p>'+ROUNDS+' prompts &middot; '+TIME+' seconds each &middot; rarer answers sink deeper</p>'+
    '<button class="pb big" id="daily">&#9660; DAILY DIVE &#9660;</button><div><button class="pb dim" id="free">RANDOM DIVE</button><button class="pb dim" id="how">HOW TO PLAY</button></div>'+swatches()+
-   '<div class="hist">BEST SCORE '+best()+(hist.length?" &nbsp;|&nbsp; LAST: "+hist.map(h=>h.score).join(" &middot; "):"")+"</div></div>";
+   '<div class="hist" id="aib" style="margin:0 0 6px"></div><div class="hist">BEST SCORE '+best()+(hist.length?" &nbsp;|&nbsp; LAST: "+hist.map(h=>h.score).join(" &middot; "):"")+"</div></div>";
   $("#daily").onclick=()=>{AU.init();AU.click();start(true)};$("#free").onclick=()=>{AU.init();AU.click();start(false)};
-  $("#how").onclick=how;bindSw();
+  $("#how").onclick=how;bindSw();badge();
 }
 function how(){AU.click();const m=document.createElement("div");m.className="modal";
-  m.innerHTML='<div class="box"><b style="color:var(--accent);font-size:26px">HOW TO PLAY</b><br>Each prompt has many valid answers. We know how often people give each one.<br><br>&bull; Common answers dig a little.<br>&bull; <b>Rare answers sink you much deeper.</b><br>&bull; Reach 7,000 m in 7 rounds. Unknown answers score nothing.<br><br><button class="pb" id="ok">GOT IT</button></div>';
+  m.innerHTML='<div class="box"><b style="color:var(--accent);font-size:26px">HOW TO PLAY</b><br>Each prompt has many valid answers. We know how often people give each one.<br><br>&bull; Common answers dig a little.<br>&bull; <b>Rare answers sink you much deeper.</b><br>&bull; Reach 7,000 m in 7 rounds. &bull; <b>A miss damages your hull</b> (no answer, or one we do not know). Lose all 3 hearts and the dive ends.<br><br><button class="pb" id="ok">GOT IT</button></div>';
   document.body.appendChild(m);m.querySelector("#ok").onclick=()=>{AU.click();m.remove()};m.onclick=e=>{if(e.target===m)m.remove()}}
 function start(daily){document.body.classList.remove("menu");
   if(daily){const done=store.get("kr_daily_"+today(),null);if(done){st={daily:true,log:done.log,depth:done.depth,score:done.score,i:ROUNDS,phase:"done",replay:true};sc.depth=done.depth;prevDepth=done.depth;setScore(done.score);pips();finish(true);return}}
   const rng=daily?seedRng("krillion"+today()):Math.random;
-  st={daily,qs:shuffle(P,rng).slice(0,ROUNDS),i:0,depth:0,score:0,log:[],phase:"answering"};
+  st={daily,qs:shuffle(P,rng).slice(0,ROUNDS),i:0,depth:0,score:0,log:[],phase:"answering",hull:HULL,sunk:false};
   sc.depth=0;prevDepth=0;sc.anim=null;setScore(0);AU.droneOn();ask();
 }
 function ask(){
@@ -327,23 +329,40 @@ function tickClock(now){const left=Math.max(0,(st.deadline-now)/1000),tb=$("#tb"
   if(s!==st.lastSec){st.lastSec=s;clk.textContent=s;if(s<=5&&s>0)AU.tick();clk.classList.toggle("low",s<=5)}
   if(left<=0)submit()}
 function submit(){if(!st||st.phase!=="answering"||st.sub)return;st.sub=true;const inp=$("#ans"),raw=inp?inp.value:"";if(inp)inp.blur();resolve(raw)}
-function resolve(raw){
-  const p=st.qs[st.i],e=match(p,raw);st.phase="feedback";
+/* Qwen edition only: the desktop app exposes pywebview.api.judge(); the web version never has it. */
+const KRAI={edition:false,ok:false,name:"",judge:async()=>false},AI_PCT=.15;
+function badge(){const b=$("#aib");if(!b)return;b.textContent=KRAI.ok?"QWEN AI JUDGE ONLINE ("+KRAI.name+")":(KRAI.edition?"QWEN AI JUDGE OFFLINE - start Ollama and pull a qwen model":"");b.style.color=KRAI.ok?"var(--accent)":"#ef9a9a"}
+window.addEventListener("pywebviewready",async()=>{try{KRAI.edition=true;const s=await pywebview.api.status();if(s&&s.ok){KRAI.ok=true;KRAI.name=s.model;
+  KRAI.judge=async(q,a)=>{try{const r=await Promise.race([pywebview.api.judge(q,a),new Promise(res=>setTimeout(()=>res(null),35000))]);return !!(r&&r.ok&&r.valid)}catch(e){return false}}}
+  badge()}catch(e){}});
+async function resolve(raw){
+  const p=st.qs[st.i];let e=match(p,raw),ai=false;
+  if(!e&&raw.trim()&&KRAI.ok){st.phase="judging";
+    ui.innerHTML='<div class="fb box" style="animation:none;opacity:1"><div class="t">ASKING QWEN...</div><p>Checking whether "'+esc(raw.trim())+'" counts.</p></div>';
+    const ok=await KRAI.judge(p[0],raw.trim());if(!st||st.phase!=="judging")return;
+    if(ok){e=[raw.trim(),p.total*AI_PCT/100,[]];ai=true}}
+  showResult(raw,e,ai);
+}
+function showResult(raw,e,ai){
+  const p=st.qs[st.i];st.phase="feedback";
   let pct=null,tier=null,pts=0,score=0;
   if(e){pct=e[1]/p.total*100;tier=tierFor(pct);pts=Math.round(tier.m*(.88+.12*clamp(1-pct/10,0,1)));score=Math.round(100*Math.log2(1+100/pct))}
   const before=st.depth;st.depth=Math.min(GOAL,st.depth+pts);st.score+=score;
-  st.log.push({q:p[0],a:raw.trim()||"-",pts,score,tier,pct});pips();
+  st.log.push({q:p[0],a:raw.trim()||"-",pts,score,tier,pct,ai});pips();
   const gain=st.depth-before;
   if(tier){AU.blub();AU.sink();sc.anim={from:sc.depth,to:st.depth,t0:performance.now(),dur:1300+tier.i*260,done:()=>{sc.shake=tier.i>=2?.4+tier.i*.15:.1;if(tier.i>=3){const f=$("#flash");f.classList.remove("go");void f.offsetWidth;f.classList.add("go")};sc.ring.push({r:2});AU.chime(tier.i);setScore(st.score);slam(tier.name,tier.col)}}}
-  else{AU.miss();setTimeout(()=>slam("NOT IN THE RECORDS","#ef9a9a"),150)}
+  else{st.hull--;pips();AU.miss();sc.shake=.8;
+    const f=$("#flash");f.style.background="#ff2a2a";f.classList.remove("go");void f.offsetWidth;f.classList.add("go");setTimeout(()=>{f.style.background=""},700);
+    setTimeout(()=>slam(st.hull>0?"HULL DAMAGED":"HULL BREACHED","#ef5350"),150)}
   const top=p[1].slice().sort((a,b)=>b[1]-a[1]).slice(0,5);
   const bars=top.map(a=>{const v=a[1]/p.total*100;return '<div class="bar2'+(e&&a===e?" me":"")+'"><span class="n">'+esc(a[0])+'</span><span class="b"><i style="width:'+Math.min(v*2.5,100)+'%"></i></span><span class="p">'+v.toFixed(v<1?2:1)+"%</span></div>"}).join("");
-  const last=st.i+1>=ROUNDS;
-  ui.innerHTML='<div class="fb box">'+(e?'<div class="t" style="color:'+tier.col+'">'+tier.name+'</div><p>"'+esc(raw.trim())+'" was given by <b>'+pct.toFixed(pct<1?2:1)+'%</b> of divers</p><div class="pts">+'+gain+'m &nbsp; +'+score+' pts</div>':
-   '<div class="t" style="color:#ef9a9a">NOT IN THE RECORDS</div><p>'+(raw.trim()?'"'+esc(raw.trim())+'" wasn\'t recognised. Check the spelling next time.':"Time ran out.")+'</p>')+
+  const sunk=!e&&st.hull<=0;st.sunk=sunk;
+  const last=sunk||st.i+1>=ROUNDS;
+  ui.innerHTML='<div class="fb box">'+(e?'<div class="t" style="color:'+tier.col+'">'+tier.name+'</div><p>"'+esc(raw.trim())+'" was given by <b>'+pct.toFixed(pct<1?2:1)+'%</b> of divers</p><div class="pts">+'+gain+'m &nbsp; +'+score+' pts</div>'+(ai?'<p style="color:var(--muted)">not on our lists, but Qwen says it counts</p>':''):
+   '<div class="t" style="color:#ef5350">'+(sunk?"HULL BREACHED":"HULL DAMAGED")+'</div><p>'+(raw.trim()?'"'+esc(raw.trim())+'" isn\'t on our list for this prompt.':"Time ran out.")+'</p><div class="pts" style="color:#ef5350">-1 &#9829; &nbsp;'+Math.max(0,st.hull)+' left</div>'+(sunk?'<p>Your sub can\'t take any more. The dive ends here.</p>':"")+'<p style="color:var(--muted)">Top answer: <b style="color:#fff">'+esc(top[0][0])+"</b></p>")+
    '<div class="bars"><small>top answers</small>'+bars+'</div><button class="pb" id="nx">'+(last?"SURFACE":"NEXT")+' &#9654;</button></div>';
   const nx=$("#nx");nx.disabled=true;setTimeout(()=>{nx.disabled=false;nx.focus()},tier?1400+tier.i*260:900);
-  nx.onclick=()=>{AU.click();st.i++;st.i<ROUNDS?ask():finish()};
+  nx.onclick=()=>{AU.click();st.i++;(!sunk&&st.i<ROUNDS)?ask():finish()};
   nx.onkeydown=ev=>{if(ev.repeat)ev.preventDefault()};
 }
 function slam(txt,col){const e=$("#slam");e.textContent=txt;e.style.color=col;e.classList.remove("go");void e.offsetWidth;e.classList.add("go")}
@@ -353,7 +372,7 @@ function finish(replay){
   if(!replay){if(sco>best())store.set("kr_best",sco);const h=store.get("kr_hist",[]);h.unshift({date:today(),mode:st.daily?"Daily":"Random",depth:d,score:sco});store.set("kr_hist",h.slice(0,20));if(st.daily)store.set("kr_daily_"+today(),{depth:d,score:sco,log:st.log});AU.fan()}
   const win=d>=GOAL,emo={COMMON:"⬜",UNCOMMON:"🟩",RARE:"🟦",EPIC:"🟪",LEGENDARY:"🟨"};
   const share="Krillion "+(st.daily?today():"(random)")+"\nDepth: "+d+"m"+(win?" TROPHY":"")+"  Score: "+sco+"\n"+st.log.map(l=>l.tier?emo[l.tier.name]:"⬛").join("");
-  ui.innerHTML='<div class="done box"><h1>'+(win?"ABYSS REACHED!":"SURFACING...")+'</h1><div class="big">'+d+'m</div><div style="color:#fff">SCORE '+sco+(sco>=best()&&!replay?" &nbsp;NEW BEST!":" &nbsp;(best "+best()+")")+'</div>'+(replay?'<div style="color:var(--muted)">You already did today\'s dive. Come back tomorrow!</div>':"")+
+  ui.innerHTML='<div class="done box"><h1>'+(win?"ABYSS REACHED!":st.sunk?"HULL BREACHED!":"SURFACING...")+'</h1><div class="big">'+d+'m</div><div style="color:#fff">SCORE '+sco+(sco>=best()&&!replay?" &nbsp;NEW BEST!":" &nbsp;(best "+best()+")")+'</div>'+(replay?'<div style="color:var(--muted)">You already did today\'s dive. Come back tomorrow!</div>':"")+
    "<table>"+st.log.map(l=>'<tr><td><span class="qs">'+esc(l.q)+'</span><br>'+esc(l.a)+'</td><td class="r" style="color:'+(l.tier?l.tier.col:"#ef9a9a")+'">'+(l.tier?l.tier.name:"MISS")+'</td></tr>').join("")+"</table>"+
    '<button class="pb" id="cp">COPY RESULT</button><button class="pb dim" id="rnd">RANDOM DIVE</button><button class="pb dim" id="mn">MENU</button></div>';
   $("#cp").onclick=()=>{AU.click();const b=$("#cp");try{navigator.clipboard.writeText(share).then(()=>{b.textContent="COPIED!"},()=>prompt("Copy:",share))}catch(e){prompt("Copy:",share)}};
