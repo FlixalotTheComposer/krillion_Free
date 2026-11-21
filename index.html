@@ -90,6 +90,17 @@ td.r{text-align:right;white-space:nowrap}.qs{color:var(--muted);font-size:14px}.
 .modal{position:fixed;inset:0;z-index:9;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:16px}
 .modal .box{max-width:460px;font-size:20px;line-height:1.25}
 @media (max-width:520px){.hb b{font-size:24px}#zone{font-size:22px;letter-spacing:3px}}
+.seg{display:flex;justify-content:center;margin:2px 0 4px}
+.seg button{font:inherit;font-size:22px;letter-spacing:2px;padding:6px 16px;color:var(--text);background:rgba(4,12,24,.85);border:2px solid rgba(255,255,255,.3);box-shadow:0 0 0 2px #000;cursor:pointer}
+.seg button+button{margin-left:-2px}
+.seg button.on{border-color:var(--accent);color:var(--accent);background:rgba(255,255,255,.12);position:relative;z-index:1}
+.mdesc{color:#fff;font-size:17px;line-height:1.15;margin:4px auto 10px;max-width:440px;text-shadow:2px 2px 0 #000;min-height:40px}
+.sg{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(66px + var(--kb) + env(safe-area-inset-bottom));width:min(94vw,640px);text-align:center}
+.smsg{display:inline-block;margin:0 0 6px;padding:4px 10px;color:#ff8a80;background:rgba(4,12,24,.85);border:2px solid #ef5350;box-shadow:0 0 0 2px #000;font-size:18px;animation:pulse .4s 1}
+.dym{color:var(--muted);font-size:15px;letter-spacing:2px;margin-right:4px;text-shadow:2px 2px 0 #000}
+.chip{font:inherit;font-size:20px;color:var(--text);background:rgba(4,12,24,.9);border:2px solid var(--accent);box-shadow:0 0 0 2px #000;padding:2px 10px;margin:3px;cursor:pointer}
+.chip.dim{border-color:rgba(255,255,255,.3);font-size:16px;color:var(--muted)}
+.chip:active{transform:translateY(2px)}
 @media (max-width:360px){.hb{padding:5px 8px}.hb b{font-size:19px}small{font-size:12px;letter-spacing:1px}#pips{gap:3px}#pips i{width:9px;height:9px;border-width:1px}.ib{width:34px;height:34px;font-size:18px}#tools{top:calc(max(10px,env(safe-area-inset-top)) + 58px)}.q{top:calc(max(10px,env(safe-area-inset-top)) + 66px)}.pb{font-size:20px;padding:6px 12px}.pb.big{font-size:24px}.clock{min-width:44px;font-size:24px}.bar input{font-size:20px}.title h1{letter-spacing:4px}.fb .t{font-size:28px}}
 @media (prefers-reduced-motion:reduce){.title h1{animation:none}}
 </style>
@@ -195,8 +206,17 @@ const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 /* ================= data prep + matching ================= */
-P.forEach(p=>{p[1]=p[1].filter(a=>a[1]>0);p.total=p[1].reduce((s,a)=>s+a[1],0);p.idx=new Map();
-  p[1].forEach(e=>{[e[0]].concat(e[2]||[]).forEach(n=>{const k=norm(n).replace(/^the /,"");if(!p.idx.has(k))p.idx.set(k,e);const ns=k.replace(/ /g,"");if(!p.idx.has(ns))p.idx.set(ns,e)})})});
+function prepPrompt(p){p[1]=p[1].filter(a=>a[1]>0);p.total=p[1].reduce((s,a)=>s+a[1],0);p.idx=new Map();
+  p[1].forEach(e=>{[e[0]].concat(e[2]||[]).forEach(n=>{const k=norm(n).replace(/^the /,"");if(!p.idx.has(k))p.idx.set(k,e);const ns=k.replace(/ /g,"");if(!p.idx.has(ns))p.idx.set(ns,e)})});return p}
+P.forEach(prepPrompt);
+/* "Did you mean": close spellings and name prefixes, never a full list of answers */
+function suggest(p,input){
+  const x=norm(input).replace(/^(a|an|the|my) /,"");if(x.length<3)return[];
+  const lim=x.length>=9?3:x.length>=5?2:1,seen=new Map();
+  for(const [k,e] of p.idx){if(k.length<3)continue;let d=null;
+    if(x.length>=4&&k.startsWith(x))d=.5;else if(Math.abs(k.length-x.length)<=lim){const l=lev(k,x);if(l<=lim)d=l}
+    if(d!==null&&(!seen.has(e)||seen.get(e)>d))seen.set(e,d)}
+  return [...seen.entries()].sort((a,b)=>a[1]-b[1]||b[0][1]-a[0][1]).slice(0,3).map(en=>en[0][0])}
 function variants(x){const out=[x];const w=x.replace(/^(a|an|the|my) /,"");out.push(w);if(/ies$/.test(w))out.push(w.slice(0,-3)+"y");if(/es$/.test(w))out.push(w.slice(0,-2));if(/s$/.test(w))out.push(w.slice(0,-1));out.push(w.replace(/ /g,""));return out}
 function match(p,input){
   const x=norm(input);if(!x)return null;
@@ -360,92 +380,146 @@ function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;
   updateScene(dt,now);drawScene();requestAnimationFrame(frame)}
 
 /* ================= game state + screens ================= */
-let st=null;const ui=$("#ui");
-const best=()=>store.get("kr_best",0);
+let st=null;const ui=$("#ui");const $$=s=>document.querySelectorAll(s);
+/* Rules: "classic" = retry until the clock runs out (+ did-you-mean); "oneshot" = one try, hull hearts;
+   "endless" (Qwen edition) = one-shot rules with prompts written by the local AI, no round limit. */
+let mode=store.get("kr_mode","classic");if(mode!=="classic"&&mode!=="oneshot")mode="classic";
+const MODE_INFO={classic:"Wrong answer? Try again until the clock runs out. Spelling help and 'did you mean' included. Each retry costs a little depth.",oneshot:"One try per prompt. A miss damages your hull: three misses and the dive is over."};
+const bestKey=m=>m==="oneshot"?"kr_best":"kr_best_"+m;
+const best=m=>store.get(bestKey(m||mode),0);
 function setScore(n){$("#score").textContent=n}
-function pips(){const el=$("#pips");el.innerHTML="";if(!st)return;for(let i=0;i<ROUNDS;i++){const e=document.createElement("i");const l=st.log[i];if(l){e.className="on";e.style.background=l.tier?l.tier.col:"#555"}else if(i===st.i&&st.phase!=="done"){e.className="on"}el.appendChild(e)}
-  if(st.hull!=null){const h=document.createElement("b");h.style.cssText="margin-left:6px;color:#ff6b6b;font-size:20px;line-height:14px";h.textContent="♥".repeat(Math.max(0,st.hull))+"♡".repeat(Math.max(0,HULL-st.hull));el.appendChild(h)}}
+function hearts(){return st&&st.hull!=null?'<b style="margin-left:6px;color:#ff6b6b;font-size:20px;line-height:14px">'+"♥".repeat(Math.max(0,st.hull))+"♡".repeat(Math.max(0,HULL-st.hull))+"</b>":""}
+function pips(){const el=$("#pips");el.innerHTML="";if(!st)return;
+  if(st.endless){el.innerHTML='<span style="font-size:20px;color:#fff;text-shadow:2px 2px 0 #000;letter-spacing:2px">ROUND '+(st.phase==="done"?st.log.length:st.i+1)+"</span>"+hearts();return}
+  for(let i=0;i<ROUNDS;i++){const e=document.createElement("i");const l=st.log[i];if(l){e.className="on";e.style.background=l.tier?l.tier.col:"#555"}else if(i===st.i&&st.phase!=="done"){e.className="on"}el.appendChild(e)}
+  el.insertAdjacentHTML("beforeend",hearts())}
 function swatches(){return '<div class="sw">'+THEMES.map((t,i)=>'<button title="'+t.name+'" data-t="'+i+'" style="background:'+t.sw+'"></button>').join("")+"</div>"}
 function bindSw(){ui.querySelectorAll(".sw button").forEach(b=>b.onclick=()=>{AU.click();setTheme(+b.dataset.t,true)});setTheme(themeIdx)}
+function paintMode(){$$("#seg button").forEach(b=>b.classList.toggle("on",b.dataset.m===mode));const d=$("#mdesc");if(d)d.textContent=MODE_INFO[mode];
+  const hist=store.get("kr_hist",[]).filter(h=>(h.rules||"oneshot")===mode).slice(0,4);
+  const b=$("#bst");if(b)b.innerHTML="BEST SCORE "+best()+(hist.length?" &nbsp;|&nbsp; LAST: "+hist.map(h=>h.score).join(" &middot; "):"")}
 function title(){
   st=null;sc.anim=null;sc.depth=0;prevDepth=0;sc.bub=[];setScore(0);pips();AU.droneOff();document.body.classList.add("menu");
-  const hist=store.get("kr_hist",[]).slice(0,4);
   ui.innerHTML='<div class="title"><h1>KRILLION</h1><div class="st">THE DAILY DIVE</div><p>'+ROUNDS+' prompts &middot; '+TIME+' seconds each &middot; rarer answers sink deeper</p>'+
-   '<button class="pb big" id="daily">&#9660; DAILY DIVE &#9660;</button><div><button class="pb dim" id="free">RANDOM DIVE</button><button class="pb dim" id="how">HOW TO PLAY</button></div>'+swatches()+
-   '<div class="hist" id="aib" style="margin:0 0 6px"></div><div class="hist">BEST SCORE '+best()+(hist.length?" &nbsp;|&nbsp; LAST: "+hist.map(h=>h.score).join(" &middot; "):"")+"</div></div>";
+   '<div class="seg" id="seg"><button data-m="classic">CLASSIC</button><button data-m="oneshot">ONE SHOT</button></div><div class="mdesc" id="mdesc"></div>'+
+   '<button class="pb big" id="daily">&#9660; DAILY DIVE &#9660;</button><div><button class="pb dim" id="free">RANDOM DIVE</button><button class="pb dim" id="how">HOW TO PLAY</button></div>'+
+   '<div><button class="pb dim" id="endless" style="display:none">&#9733; ENDLESS AI</button></div>'+swatches()+
+   '<div class="hist" id="aib" style="margin:0 0 6px"></div><div class="hist" id="bst"></div></div>';
   $("#daily").onclick=()=>{AU.init();AU.click();start(true)};$("#free").onclick=()=>{AU.init();AU.click();start(false)};
-  $("#how").onclick=how;bindSw();badge();
+  $("#endless").onclick=()=>{AU.init();AU.click();startEndless()};
+  $$("#seg button").forEach(b=>b.onclick=()=>{AU.click();mode=b.dataset.m;store.set("kr_mode",mode);paintMode()});
+  $("#how").onclick=how;bindSw();paintMode();badge();
 }
 function how(){AU.click();const m=document.createElement("div");m.className="modal";
-  m.innerHTML='<div class="box"><b style="color:var(--accent);font-size:26px">HOW TO PLAY</b><br>Each prompt has many valid answers. We know how often people give each one.<br><br>&bull; Common answers dig a little.<br>&bull; <b>Rare answers sink you much deeper.</b><br>&bull; Reach 7,000 m in 7 rounds. &bull; <b>A miss damages your hull</b> (no answer, or one we do not know). Lose all 3 hearts and the dive ends.<br><br><button class="pb" id="ok">GOT IT</button></div>';
+  m.innerHTML='<div class="box"><b style="color:var(--accent);font-size:26px">HOW TO PLAY</b><br>Each prompt has many valid answers. We know how often people give each one.<br><br>&bull; Common answers dig a little.<br>&bull; <b>Rare answers sink you much deeper.</b><br>&bull; Reach 7,000 m in 7 rounds.<br><br><b style="color:var(--accent)">CLASSIC</b>: a wrong answer lets you try again until the clock runs out (each retry costs 10% of the depth). Close spellings are corrected and "did you mean" helps.<br><b style="color:var(--accent)">ONE SHOT</b>: one try per prompt. A miss damages your hull: three and the dive ends.<br><b style="color:var(--accent)">ENDLESS AI</b> (Qwen desktop edition): Qwen writes new prompts forever, one-shot rules, until your hull is breached.<br><br><button class="pb" id="ok">GOT IT</button></div>';
   document.body.appendChild(m);m.querySelector("#ok").onclick=()=>{AU.click();m.remove()};m.onclick=e=>{if(e.target===m)m.remove()}}
 function start(daily){document.body.classList.remove("menu");
-  if(daily){const done=store.get("kr_daily_"+today(),null);if(done){st={daily:true,log:done.log,depth:done.depth,score:done.score,i:ROUNDS,phase:"done",replay:true};sc.depth=done.depth;prevDepth=done.depth;setScore(done.score);pips();finish(true);return}}
+  if(daily){const key="kr_daily_"+mode+"_"+today(),done=store.get(key,mode==="oneshot"?store.get("kr_daily_"+today(),null):null);
+    if(done){st={daily:true,mode,log:done.log,depth:done.depth,score:done.score,i:ROUNDS,phase:"done",replay:true,sunk:false};sc.depth=done.depth;prevDepth=done.depth;setScore(done.score);pips();finish(true);return}}
   const rng=daily?seedRng("krillion"+today()):Math.random;
-  st={daily,qs:shuffle(P,rng).slice(0,ROUNDS),i:0,depth:0,score:0,log:[],phase:"answering",hull:HULL,sunk:false};
+  st={daily,mode,qs:shuffle(P,rng).slice(0,ROUNDS),i:0,depth:0,score:0,log:[],phase:"answering",hull:mode==="oneshot"?HULL:null,sunk:false,tries:0};
   sc.depth=0;prevDepth=0;sc.anim=null;setScore(0);AU.droneOn();ask();
 }
-function ask(){
-  const p=st.qs[st.i];st.phase="answering";st.sub=false;pips();
-  ui.innerHTML='<div class="q box"><small>PROMPT '+(st.i+1)+' / '+ROUNDS+'</small><h2>'+esc(p[0])+'</h2><small style="font-size:14px">&#9662; rarer answers sink deeper</small></div>'+
-   '<div class="tbar"><i id="tb"></i></div><form class="bar" id="f" autocomplete="off"><div class="clock" id="clk">'+TIME+'</div><input id="ans" type="text" enterkeyhint="go" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" maxlength="60" placeholder="type your answer..."><button class="pb" type="submit" style="margin:0">DIVE</button></form>';
+
+/* ---- Endless AI: Qwen writes the prompts (needs the Qwen desktop edition) ---- */
+const TOPICS=["things in a kitchen","animals of the ocean","famous landmarks","board games","types of pasta","musical instruments","sports","countries","capital cities","fruits","vegetables","superheroes","cartoon characters","video game characters","Disney movies","car brands","clothing items","school subjects","jobs and professions","parts of the body","things at the beach","things in a bathroom","things in a garage","types of weather","dinosaurs","birds","insects","trees","flowers","cheeses","desserts","fast food chains","breakfast foods","drinks","tools","gemstones","currencies","languages","rivers","mountains","islands","famous scientists","famous painters","characters from Greek myths","things in space","things at an airport","types of dance","spices","sandwiches","hats","board and card games","TV sitcoms","candy and sweets","hobbies","things in a classroom","zoo animals","farm animals","pizza toppings"];
+/* returns [full topic, plain topic]: the plain one is the fallback if the letter rule cannot be satisfied */
+function pickTopic(i){const t=TOPICS[Math.floor(Math.random()*TOPICS.length)],L="ABCDGHLMPRSTW"[Math.floor(Math.random()*13)];
+  if(i<3)return [t,t];
+  if(i<8)return [Math.random()<.5?t+" that start with the letter "+L:t,t];
+  return [t+(Math.random()<.5?" that start with the letter "+L:" that contain the letter "+"BCDGHKLMPUWY"[Math.floor(Math.random()*12)])+" (a harder, less obvious prompt)",t]}
+function startEndless(){if(!KRAI.ok)return;document.body.classList.remove("menu");
+  st={daily:false,mode:"endless",endless:true,qs:[],pf:{},i:0,depth:0,score:0,log:[],phase:"waiting",hull:HULL,sunk:false,tries:0,used:[]};
+  sc.depth=0;prevDepth=0;sc.anim=null;setScore(0);AU.droneOn();pips();askNext()}
+function fetchPrompt(i){const S=st;if(S.qs[i])return Promise.resolve();if(S.pf[i])return S.pf[i];
+  S.pf[i]=(async()=>{
+    const tp=pickTopic(i);for(let t=0;t<2;t++){try{const r=await Promise.race([pywebview.api.gen_prompt(tp[t],S.used.slice(-12)),new Promise(res=>setTimeout(()=>res(null),120000))]);
+      if(r&&r.ok&&r.answers&&r.answers.length>=12){const p=[r.prompt,r.answers.map((a,k)=>[a,100/Math.pow(k+1,1.05)])];prepPrompt(p);p.ai=true;S.used.push(r.prompt);S.qs[i]=p;return}}catch(e){}}
+    const pool=P.filter(x=>!S.used.includes(x[0])),f=(pool.length?pool:P)[Math.floor(Math.random()*(pool.length||P.length))];S.used.push(f[0]);S.qs[i]=f;S.fallbacks=(S.fallbacks||0)+1})();
+  return S.pf[i]}
+async function askNext(){const S=st;if(!S)return;
+  if(S.endless&&!S.qs[S.i]){S.phase="waiting";ui.innerHTML='<div class="fb box" style="animation:none;opacity:1"><div class="t">QWEN IS WRITING...</div><p>Inventing your next prompt. This takes a few seconds.</p></div>';await fetchPrompt(S.i);if(st!==S)return}
+  ask();if(S.endless)fetchPrompt(S.i+1)}
+
+/* ---- one prompt ---- */
+function ask(){const p=st.qs[st.i];st.phase="answering";st.sub=false;st.tries=0;st.skip=false;st.timeUp=false;pips();
+  st.deadline=performance.now()+TIME*1000;st.lastSec=TIME;renderAsk(p)}
+function renderAsk(p,msg,sug){
+  ui.innerHTML='<div class="q box"'+(st.tries?' style="animation:none"':'')+'><small>PROMPT '+(st.endless?st.i+1:(st.i+1)+" / "+ROUNDS)+(st.tries?" &middot; TRY "+(st.tries+1):"")+'</small><h2>'+esc(p[0])+'</h2><small style="font-size:14px">&#9662; rarer answers sink deeper'+(p.ai?" &middot; written by Qwen":"")+(st.fallbacks&&!p.ai&&st.endless?" &middot; offline prompt":"")+'</small></div>'+
+   '<div class="sg" id="sg"></div><div class="tbar"><i id="tb"></i></div><form class="bar" id="f" autocomplete="off"><div class="clock" id="clk">'+Math.max(0,Math.ceil((st.deadline-performance.now())/1000))+'</div><input id="ans" type="text" enterkeyhint="go" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" maxlength="60" placeholder="type your answer..."><button class="pb" type="submit" style="margin:0">DIVE</button></form>';
+  const sg=$("#sg");
+  if(msg){const m=document.createElement("div");m.className="smsg";m.textContent=msg;sg.appendChild(m)}
+  if(sug&&sug.length){const d=document.createElement("div");d.innerHTML='<span class="dym">DID YOU MEAN</span>';
+    sug.forEach(s=>{const b=document.createElement("button");b.type="button";b.className="chip";b.textContent=s;b.onclick=()=>{AU.click();$("#ans").value=s;submit()};d.appendChild(b)});sg.appendChild(d)}
+  if(st.mode==="classic"){const b=document.createElement("button");b.type="button";b.className="chip dim";b.textContent="SKIP ▶";b.onclick=()=>{AU.click();st.skip=true;submit()};sg.appendChild(b)}
   const inp=$("#ans");setTimeout(()=>inp.focus(),50);
-  st.deadline=performance.now()+TIME*1000;st.lastSec=TIME;
   $("#f").onsubmit=e=>{e.preventDefault();submit()};
   inp.oninput=()=>{if(Math.random()<.5)AU.tone(500+Math.random()*300,.03,"square",.015)};
 }
 function tickClock(now){const left=Math.max(0,(st.deadline-now)/1000),tb=$("#tb"),clk=$("#clk");if(!tb)return;tb.style.width=(left/TIME*100)+"%";const s=Math.ceil(left);
   if(s!==st.lastSec){st.lastSec=s;clk.textContent=s;if(s<=5&&s>0)AU.tick();clk.classList.toggle("low",s<=5)}
-  if(left<=0)submit()}
-function submit(){if(!st||st.phase!=="answering"||st.sub)return;st.sub=true;const inp=$("#ans"),raw=inp?inp.value:"";if(inp)inp.blur();resolve(raw)}
+  if(left<=0){st.timeUp=true;submit()}}
+function submit(){if(!st||st.phase!=="answering"||st.sub)return;const inp=$("#ans"),raw=st.skip?"":(inp?inp.value:"");
+  if(st.mode==="classic"&&!raw.trim()&&!st.skip&&!st.timeUp){if(inp)inp.focus();return}   /* an empty Enter is not a skip */
+  st.sub=true;if(inp)inp.blur();resolve(raw)}
 /* Qwen edition only: the desktop app exposes pywebview.api.judge(); the web version never has it. */
 const KRAI={edition:false,ok:false,name:"",judge:async()=>false},AI_PCT=.15;
-function badge(){const b=$("#aib");if(!b)return;b.textContent=KRAI.ok?"QWEN AI JUDGE ONLINE ("+KRAI.name+")":(KRAI.edition?"QWEN AI JUDGE OFFLINE - start Ollama and pull a qwen model":"");b.style.color=KRAI.ok?"var(--accent)":"#ef9a9a"}
+function badge(){const b=$("#aib");if(b){b.textContent=KRAI.ok?"QWEN AI JUDGE ONLINE ("+KRAI.name+")":(KRAI.edition?"QWEN AI JUDGE OFFLINE - start Ollama and pull a qwen model":"");b.style.color=KRAI.ok?"var(--accent)":"#ef9a9a"}
+  const eb=$("#endless");if(eb){eb.style.display=KRAI.edition?"":"none";eb.disabled=!KRAI.ok}}
 window.addEventListener("pywebviewready",async()=>{try{KRAI.edition=true;const s=await pywebview.api.status();if(s&&s.ok){KRAI.ok=true;KRAI.name=s.model;
   KRAI.judge=async(q,a)=>{try{const r=await Promise.race([pywebview.api.judge(q,a),new Promise(res=>setTimeout(()=>res(null),35000))]);return !!(r&&r.ok&&r.valid)}catch(e){return false}}}
   badge()}catch(e){}});
 async function resolve(raw){
-  const p=st.qs[st.i];let e=match(p,raw),ai=false;
-  if(!e&&raw.trim()&&KRAI.ok){st.phase="judging";
-    ui.innerHTML='<div class="fb box" style="animation:none;opacity:1"><div class="t">ASKING QWEN...</div><p>Checking whether "'+esc(raw.trim())+'" counts.</p></div>';
-    const ok=await KRAI.judge(p[0],raw.trim());if(!st||st.phase!=="judging")return;
+  const S=st,p=S.qs[S.i];let e=match(p,raw),ai=false;
+  if(!e&&raw.trim()&&KRAI.ok&&!S.timeUp){S.phase="judging";const t0=performance.now(),sg=$("#sg");
+    if(sg&&S.mode==="classic")sg.innerHTML='<div class="smsg">ASKING QWEN...</div>';
+    else ui.innerHTML='<div class="fb box" style="animation:none;opacity:1"><div class="t">ASKING QWEN...</div><p>Checking whether "'+esc(raw.trim())+'" counts.</p></div>';
+    const ok=await KRAI.judge(p[0],raw.trim());if(st!==S||S.phase!=="judging")return;
+    S.deadline+=performance.now()-t0;   /* the clock waits while the AI thinks */
     if(ok){e=[raw.trim(),p.total*AI_PCT/100,[]];ai=true}}
+  if(!e&&S.mode==="classic"&&raw.trim()&&!S.timeUp&&!S.skip&&(S.deadline-performance.now())>500){retry(raw,p);return}
   showResult(raw,e,ai);
 }
+function retry(raw,p){st.tries++;st.phase="answering";st.sub=false;AU.miss();sc.shake=.3;
+  renderAsk(p,'"'+raw.trim()+'" is not on our list. Try again!',suggest(p,raw))}
 function showResult(raw,e,ai){
-  const p=st.qs[st.i];st.phase="feedback";
+  const S=st,p=S.qs[S.i];S.phase="feedback";
   let pct=null,tier=null,pts=0,score=0;
-  if(e){pct=e[1]/p.total*100;tier=tierFor(pct);pts=Math.round(tier.m*(.88+.12*clamp(1-pct/10,0,1)));score=Math.round(100*Math.log2(1+100/pct))}
-  const before=st.depth;st.depth=Math.min(GOAL,st.depth+pts);st.score+=score;
-  st.log.push({q:p[0],a:raw.trim()||"-",pts,score,tier,pct,ai});pips();
-  const gain=st.depth-before;
-  if(tier){AU.blub();AU.sink();sc.anim={from:sc.depth,to:st.depth,t0:performance.now(),dur:1300+tier.i*260,done:()=>{sc.shake=tier.i>=2?.4+tier.i*.15:.1;if(tier.i>=3){const f=$("#flash");f.classList.remove("go");void f.offsetWidth;f.classList.add("go")};sc.ring.push({r:2});AU.chime(tier.i);setScore(st.score);slam(tier.name,tier.col)}}}
-  else{st.hull--;pips();AU.miss();sc.shake=.8;
-    const f=$("#flash");f.style.background="#ff2a2a";f.classList.remove("go");void f.offsetWidth;f.classList.add("go");setTimeout(()=>{f.style.background=""},700);
-    setTimeout(()=>slam(st.hull>0?"HULL DAMAGED":"HULL BREACHED","#ef5350"),150)}
+  const f=S.mode==="classic"?1-.1*Math.min(S.tries||0,5):1;
+  if(e){pct=e[1]/p.total*100;tier=tierFor(pct);pts=Math.round(tier.m*(.88+.12*clamp(1-pct/10,0,1))*f);score=Math.round(100*Math.log2(1+100/pct)*f)}
+  const before=S.depth;S.depth=Math.min(GOAL,S.depth+pts);S.score+=score;
+  S.log.push({q:p[0],a:raw.trim()||"-",pts,score,tier,pct,ai,tries:S.tries||0});pips();
+  const gain=S.depth-before;
+  if(S.endless&&S.depth>=GOAL&&!S.reached){S.reached=true;toast("ABYSS REACHED - keep going!")}
+  if(tier){AU.blub();AU.sink();sc.anim={from:sc.depth,to:S.depth,t0:performance.now(),dur:1300+tier.i*260,done:()=>{sc.shake=tier.i>=2?.4+tier.i*.15:.1;if(tier.i>=3){const fl=$("#flash");fl.classList.remove("go");void fl.offsetWidth;fl.classList.add("go")};sc.ring.push({r:2});AU.chime(tier.i);setScore(S.score);slam(tier.name,tier.col)}}}
+  else{if(S.hull!=null)S.hull--;pips();AU.miss();sc.shake=.8;
+    const fl=$("#flash");fl.style.background="#ff2a2a";fl.classList.remove("go");void fl.offsetWidth;fl.classList.add("go");setTimeout(()=>{fl.style.background=""},700);
+    setTimeout(()=>slam(S.hull==null?"TIME'S UP":S.hull>0?"HULL DAMAGED":"HULL BREACHED","#ef5350"),150)}
   const top=p[1].slice().sort((a,b)=>b[1]-a[1]).slice(0,5);
   const bars=top.map(a=>{const v=a[1]/p.total*100;return '<div class="bar2'+(e&&a===e?" me":"")+'"><span class="n">'+esc(a[0])+'</span><span class="b"><i style="width:'+Math.min(v*2.5,100)+'%"></i></span><span class="p">'+v.toFixed(v<1?2:1)+"%</span></div>"}).join("");
-  const sunk=!e&&st.hull<=0;st.sunk=sunk;
-  const last=sunk||st.i+1>=ROUNDS;
-  ui.innerHTML='<div class="fb box">'+(e?'<div class="t" style="color:'+tier.col+'">'+tier.name+'</div><p>"'+esc(raw.trim())+'" was given by <b>'+pct.toFixed(pct<1?2:1)+'%</b> of divers</p><div class="pts">+'+gain+'m &nbsp; +'+score+' pts</div>'+(ai?'<p style="color:var(--muted)">not on our lists, but Qwen says it counts</p>':''):
-   '<div class="t" style="color:#ef5350">'+(sunk?"HULL BREACHED":"HULL DAMAGED")+'</div><p>'+(raw.trim()?'"'+esc(raw.trim())+'" isn\'t on our list for this prompt.':"Time ran out.")+'</p><div class="pts" style="color:#ef5350">-1 &#9829; &nbsp;'+Math.max(0,st.hull)+' left</div>'+(sunk?'<p>Your sub can\'t take any more. The dive ends here.</p>':"")+'<p style="color:var(--muted)">Top answer: <b style="color:#fff">'+esc(top[0][0])+"</b></p>")+
+  const sunk=!e&&S.hull!=null&&S.hull<=0;S.sunk=sunk;
+  const last=sunk||(!S.endless&&S.i+1>=ROUNDS);
+  const typed=norm(raw).replace(/^(a|an|the|my) /,""),fixed=e&&!ai&&typed&&!variants(norm(raw)).some(v=>p.idx.has(v));
+  const notes=(fixed?'<p style="color:var(--muted)">spelling corrected: counted as <b style="color:#fff">'+esc(e[0])+"</b></p>":"")+(ai?'<p style="color:var(--muted)">not on our lists, but Qwen says it counts</p>':"")+(e&&S.tries?'<p style="color:var(--muted)">found on try '+(S.tries+1)+" &middot; -"+S.tries*10+"% depth</p>":"");
+  ui.innerHTML='<div class="fb box">'+(e?'<div class="t" style="color:'+tier.col+'">'+tier.name+'</div><p>"'+esc(raw.trim()||e[0])+'" was given by <b>'+pct.toFixed(pct<1?2:1)+'%</b> of divers</p><div class="pts">+'+gain+'m &nbsp; +'+score+' pts</div>'+notes:
+   '<div class="t" style="color:#ef5350">'+(S.hull==null?(S.skip?"SKIPPED":"TIME'S UP"):sunk?"HULL BREACHED":"HULL DAMAGED")+'</div><p>'+(raw.trim()?'"'+esc(raw.trim())+'" isn\'t on our list for this prompt.':(S.skip?"You skipped this one.":"Time ran out."))+'</p>'+(S.hull!=null?'<div class="pts" style="color:#ef5350">-1 &#9829; &nbsp;'+Math.max(0,S.hull)+' left</div>':"")+(sunk?'<p>Your sub can\'t take any more. The dive ends here.</p>':"")+'<p style="color:var(--muted)">Top answer: <b style="color:#fff">'+esc(top[0][0])+"</b></p>")+
    '<div class="bars"><small>top answers</small>'+bars+'</div><button class="pb" id="nx">'+(last?"SURFACE":"NEXT")+' &#9654;</button></div>';
   const nx=$("#nx");nx.disabled=true;setTimeout(()=>{nx.disabled=false;nx.focus()},tier?1400+tier.i*260:900);
-  nx.onclick=()=>{AU.click();st.i++;(!sunk&&st.i<ROUNDS)?ask():finish()};
+  nx.onclick=()=>{AU.click();S.i++;if(sunk||(!S.endless&&S.i>=ROUNDS))finish();else askNext()};
   nx.onkeydown=ev=>{if(ev.repeat)ev.preventDefault()};
 }
 function slam(txt,col){const e=$("#slam");e.textContent=txt;e.style.color=col;e.classList.remove("go");void e.offsetWidth;e.classList.add("go")}
 function finish(replay){
   st.phase="done";AU.droneOff();pips();["#slam","#zone"].forEach(function(q){$(q).classList.remove("go")});
-  const d=st.depth,sco=st.score;
-  if(!replay){if(sco>best())store.set("kr_best",sco);const h=store.get("kr_hist",[]);h.unshift({date:today(),mode:st.daily?"Daily":"Random",depth:d,score:sco});store.set("kr_hist",h.slice(0,20));if(st.daily)store.set("kr_daily_"+today(),{depth:d,score:sco,log:st.log});AU.fan()}
-  const win=d>=GOAL,emo={COMMON:"⬜",UNCOMMON:"🟩",RARE:"🟦",EPIC:"🟪",LEGENDARY:"🟨"};
-  const share="Krillion "+(st.daily?today():"(random)")+"\nDepth: "+d+"m"+(win?" TROPHY":"")+"  Score: "+sco+"\n"+st.log.map(l=>l.tier?emo[l.tier.name]:"⬛").join("");
-  ui.innerHTML='<div class="done box"><h1>'+(win?"ABYSS REACHED!":st.sunk?"HULL BREACHED!":"SURFACING...")+'</h1><div class="big">'+d+'m</div><div style="color:#fff">SCORE '+sco+(sco>=best()&&!replay?" &nbsp;NEW BEST!":" &nbsp;(best "+best()+")")+'</div>'+(replay?'<div style="color:var(--muted)">You already did today\'s dive. Come back tomorrow!</div>':"")+
-   "<table>"+st.log.map(l=>'<tr><td><span class="qs">'+esc(l.q)+'</span><br>'+esc(l.a)+'</td><td class="r" style="color:'+(l.tier?l.tier.col:"#ef9a9a")+'">'+(l.tier?l.tier.name:"MISS")+'</td></tr>').join("")+"</table>"+
-   '<button class="pb" id="cp">COPY RESULT</button><button class="pb dim" id="rnd">RANDOM DIVE</button><button class="pb dim" id="mn">MENU</button></div>';
+  const m=st.mode,d=st.depth,sco=st.score,prevBest=best(m);
+  if(!replay){if(sco>prevBest)store.set(bestKey(m),sco);const h=store.get("kr_hist",[]);h.unshift({date:today(),mode:st.daily?"Daily":st.endless?"Endless":"Random",rules:m,depth:d,score:sco});store.set("kr_hist",h.slice(0,30));if(st.daily)store.set("kr_daily_"+m+"_"+today(),{depth:d,score:sco,log:st.log});AU.fan()}
+  const win=d>=GOAL,emo={COMMON:"⬜",UNCOMMON:"🟩",RARE:"🟦",EPIC:"🟪",LEGENDARY:"🟨"},name={classic:"Classic",oneshot:"One Shot",endless:"Endless AI"}[m];
+  const share="Krillion "+name+" "+(st.daily?today():"(random)")+"\nDepth: "+d+"m"+(win?" TROPHY":"")+"  Score: "+sco+(st.endless?"  Rounds: "+st.log.length:"")+"\n"+st.log.map(l=>l.tier?emo[l.tier.name]:"⬛").join("");
+  ui.innerHTML='<div class="done box"><h1>'+(win&&!st.endless?"ABYSS REACHED!":st.sunk?"HULL BREACHED!":st.endless?"DIVE OVER":"SURFACING...")+'</h1><div class="big">'+d+'m</div><div style="color:#fff">SCORE '+sco+(st.endless?" &middot; "+st.log.length+" ROUNDS":"")+(sco>=Math.max(prevBest,sco)&&!replay&&sco>prevBest?" &nbsp;NEW BEST!":" &nbsp;(best "+best(m)+")")+'</div><div style="color:var(--muted)">'+name.toUpperCase()+"</div>"+(replay?'<div style="color:var(--muted)">You already did today\'s '+name+' dive. Come back tomorrow!</div>':"")+
+   "<table>"+st.log.map(l=>'<tr><td><span class="qs">'+esc(l.q)+'</span><br>'+esc(l.a)+(l.tries?' <span class="qs">(try '+(l.tries+1)+")</span>":"")+'</td><td class="r" style="color:'+(l.tier?l.tier.col:"#ef9a9a")+'">'+(l.tier?l.tier.name:"MISS")+'</td></tr>').join("")+"</table>"+
+   '<button class="pb" id="cp">COPY RESULT</button><button class="pb dim" id="rnd">'+(st.endless?"AGAIN":"RANDOM DIVE")+'</button><button class="pb dim" id="mn">MENU</button></div>';
   $("#cp").onclick=()=>{AU.click();const b=$("#cp");try{navigator.clipboard.writeText(share).then(()=>{b.textContent="COPIED!"},()=>prompt("Copy:",share))}catch(e){prompt("Copy:",share)}};
-  $("#rnd").onclick=()=>{AU.click();start(false)};$("#mn").onclick=()=>{AU.click();title()};
+  $("#rnd").onclick=()=>{AU.click();if(st.endless)startEndless();else{mode=st.mode;start(false)}};$("#mn").onclick=()=>{AU.click();title()};
 }
 
 /* ================= wiring ================= */

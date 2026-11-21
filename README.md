@@ -11,7 +11,8 @@ On iPhone use Safari, then Share > Add to Home Screen.
 - Sound effects and an ambient drone generated in code (Web Audio), with a mute button.
 - 140+ prompts, including hard ones with letter rules ("a mountain containing the letter K").
 - Daily dive (same prompts for everyone each day, one per day) and random dive.
-- Hull hearts: a wrong, unknown or missing answer costs a heart.
+- **Two rule sets** (pick on the menu): **Classic**, where a wrong answer lets you retry the same prompt until the clock runs out (each retry costs 10% of the depth) with spelling correction and "did you mean" suggestions; and **One Shot**, one try per prompt with hull hearts (three misses end the dive). Scores and the daily dive are tracked separately for each.
+- **Endless AI** (Qwen desktop edition only): Qwen writes new prompts forever with ranked answers, one-shot rules, until your hull is breached.
 
 ## Two desktop downloads (Releases page)
 | File | What it is |

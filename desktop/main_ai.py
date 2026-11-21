@@ -88,7 +88,66 @@ class Api:
             return {"ok": False}
 
 
+GEN_SYSTEM = (
+    "You write prompts for a trivia game where players name things. Reply with JSON only."
+)
+
+
+def _gen_user(topic, avoid):
+    return (
+        "Write ONE prompt in the style 'Name a ...' (or 'Name an ...') about: %s.\n"
+        "Then list 25 valid answers, ordered from the answer most people would say first to the most obscure. "
+        "Every answer must be a real, correctly spelled item that satisfies every rule in your prompt "
+        "(for example a starting letter). Use short everyday names. No duplicates.\n"
+        "Do not repeat these earlier prompts: %s"
+    ) % (topic, "; ".join(avoid) if avoid else "none")
+
+
+def _clean_answers(raw):
+    seen, out = set(), []
+    for a in raw or []:
+        a = _clean(a, 45)
+        k = a.lower()
+        if a and k not in seen and len(a) >= 2:
+            seen.add(k)
+            out.append(a)
+    return out
+
+
+class EndlessApi(Api):
+    def gen_prompt(self, topic, avoid):
+        """Ask the local model for a new prompt plus ranked valid answers; sanity-check it before use."""
+        if not self.model:
+            return {"ok": False}
+        topic = _clean(topic, 160)
+        avoid = [_clean(x, 100) for x in (avoid or [])][:12]
+        body = {
+            "model": self.model, "stream": False, "think": False, "keep_alive": "30m",
+            "format": {"type": "object",
+                       "properties": {"prompt": {"type": "string"},
+                                      "answers": {"type": "array", "items": {"type": "string"}}},
+                       "required": ["prompt", "answers"]},
+            "options": {"temperature": 0.8, "num_predict": 700},
+            "messages": [{"role": "system", "content": GEN_SYSTEM},
+                         {"role": "user", "content": _gen_user(topic, avoid)}],
+        }
+        try:
+            out = json.loads(_post("/api/chat", body, 90)["message"]["content"])
+        except Exception:
+            return {"ok": False}
+        prompt = _clean(out.get("prompt", ""), 90)
+        answers = _clean_answers(out.get("answers"))
+        if not prompt.lower().startswith("name ") or len(answers) < 12 or prompt in avoid:
+            return {"ok": False}
+        # spot-check: two answers from the middle/end of the list must also pass the judge
+        import random
+        for a in random.sample(answers[4:], 2):
+            if not self.judge(prompt, a).get("valid"):
+                return {"ok": False}
+        return {"ok": True, "prompt": prompt, "answers": answers[:40]}
+
+
 if __name__ == "__main__":
-    webview.create_window("Krillion (Qwen edition)", res("index.html"), js_api=Api(),
+    webview.create_window("Krillion (Qwen edition)", res("index.html"), js_api=EndlessApi(),
                           width=1000, height=720, min_size=(640, 520))
     webview.start()
